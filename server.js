@@ -158,29 +158,29 @@ app.post("/api/portal", auth, async (req, res) => {
 });
 
 // ── Stripe: webhook ────────────────────────────────────────────────────────
-app.post("/stripe/webhook", (req, res) => {
-  let event;
-  try {
-    event = stripe.webhooks.constructEvent(
-      req.body, req.headers["stripe-signature"], process.env.STRIPE_WEBHOOK_SECRET);
-  } catch(e) { return res.status(400).send(`Webhook Error: ${e.message}`); }
+app.post("/stripe/webhook",
+  express.raw({ type: "application/json" }),
+  (req, res) => {
+    let event;
 
-  if (event.type === "checkout.session.completed") {
-    const s = event.data.object;
-    if (s.metadata?.discordId && s.metadata?.plan) {
-      updateUser(s.metadata.discordId, { plan:s.metadata.plan, stripeSubscriptionId:s.subscription });
-      console.log(`✅ Upgraded ${s.metadata.discordId} → ${s.metadata.plan}`);
+    try {
+      event = stripe.webhooks.constructEvent(
+        req.body,
+        req.headers["stripe-signature"],
+        process.env.STRIPE_WEBHOOK_SECRET
+      );
+    } catch (e) {
+      return res.status(400).send(`Webhook Error: ${e.message}`);
     }
-  }
 
-  if (event.type === "customer.subscription.deleted" ||
-      (event.type === "customer.subscription.updated" && event.data.object.status !== "active")) {
-    const u = getUserByStripe(event.data.object.customer);
-    if (u) { updateUser(u.discordId, { plan:"free", stripeSubscriptionId:null }); }
-  }
+    // handle events...
 
-  res.json({ received:true });
-});
+    res.json({ received: true });
+  }
+);
+
+// AFTER webhook:
+app.use(express.json());
 
 // ── API: generate ──────────────────────────────────────────────────────────
 app.post("/api/generate", auth, async (req, res) => {
