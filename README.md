@@ -1,67 +1,126 @@
-# FCV Site — Steam Manifest Generator with Discord Auth
+# FCV Site — Full Setup Tutorial
 
 ## File Structure
 ```
 fcv-site/
-├── server.js          ← Node.js backend
+├── server.js
 ├── package.json
-├── .env               ← Your secrets
-├── users.json         ← Auto-created, stores user data
+├── .env
+├── users.json          ← auto-created
 └── public/
-    └── index.html     ← Frontend
+    └── index.html
 ```
 
 ---
 
-## Step 1 — Create Discord OAuth App
+## STEP 1 — Discord OAuth App
 
 1. Go to https://discord.com/developers/applications
 2. Click **New Application** → name it "FCV Generator"
-3. Go to **OAuth2** in the left sidebar
-4. Under **Redirects** click **Add Redirect** and enter:
-   `https://your-app.railway.app/auth/callback`
-   (use `http://localhost:3000/auth/callback` for local testing)
+3. Go to **OAuth2 → General**
+4. Under **Redirects** add:
+   - `http://localhost:3000/auth/callback`
+   - `https://your-app.railway.app/auth/callback`
 5. Copy your **Client ID** and **Client Secret**
 
 ---
 
-## Step 2 — Deploy to Railway
+## STEP 2 — Stripe Setup
 
-1. Push this folder to a GitHub repo
-2. Go to https://railway.app → **New Project → Deploy from GitHub**
-3. Select your repo
-4. Go to **Variables** tab and add:
+### Create products
+1. Go to https://stripe.com → sign in → stay in **Test mode** (toggle top right)
+2. Go to **Products** → **Add product**
+3. Create **Basic**: $2.00 / month (Recurring) → copy the Price ID
+4. Create **Enterprise**: $5.00 / month (Recurring) → copy the Price ID
 
+### Get API keys
+Go to **Developers → API keys** → copy **Secret key** (sk_test_...)
+
+### Webhook for local testing
+Install Stripe CLI: https://stripe.com/docs/stripe-cli
+```bash
+stripe login
+stripe listen --forward-to localhost:3000/stripe/webhook
 ```
-DISCORD_CLIENT_ID=your_client_id
-DISCORD_CLIENT_SECRET=your_client_secret
-REDIRECT_URI=https://your-app.railway.app/auth/callback
-SESSION_SECRET=any_long_random_string_here
-```
+Copy the `whsec_...` it gives you.
 
-5. Railway auto-detects Node.js and runs `npm start`
-6. Go to **Settings → Networking → Generate Domain** to get your URL
-7. Update the Discord OAuth redirect URL with your Railway domain
+### Webhook for production
+1. **Developers → Webhooks → Add endpoint**
+2. URL: `https://your-app.railway.app/stripe/webhook`
+3. Events: `checkout.session.completed`, `customer.subscription.deleted`, `customer.subscription.updated`
+4. Copy the signing secret
 
 ---
 
-## Step 3 — Test locally first (optional)
+## STEP 3 — Fill in .env
+
+```
+DISCORD_CLIENT_ID=paste_here
+DISCORD_CLIENT_SECRET=paste_here
+REDIRECT_URI=http://localhost:3000/auth/callback
+SESSION_SECRET=any_long_random_string_abc123xyz
+SITE_URL=http://localhost:3000
+
+STRIPE_SECRET_KEY=sk_test_paste_here
+STRIPE_PRICE_BASIC=price_paste_here
+STRIPE_PRICE_ENTERPRISE=price_paste_here
+STRIPE_WEBHOOK_SECRET=whsec_paste_here
+```
+
+---
+
+## STEP 4 — Run locally
 
 ```bash
 npm install
-# Fill in .env with localhost values
 node server.js
-# Open http://localhost:3000
 ```
+Open http://localhost:3000
 
 ---
 
-## How it works
+## STEP 5 — Test payments (no real money ever)
 
-- User visits site → sees login gate on the generator card
-- Clicks "Login with Discord" → Discord OAuth flow
-- After auth, backend creates a user record in `users.json`
-- Each generation call checks: is user logged in? how many this month?
-- If under 10 → runs generation, increments counter, returns .lua
-- If at 10 → returns 429 error with upgrade message
-- Counter resets automatically at the start of each calendar month
+Use these test card numbers at checkout:
+
+| Card                  | Result        |
+|-----------------------|---------------|
+| 4242 4242 4242 4242   | Success       |
+| 4000 0000 0000 0002   | Declined      |
+| 4000 0025 0000 3155   | 3D Secure     |
+
+Expiry: any future date | CVC: any 3 digits | ZIP: any 5 digits
+
+### Full test flow:
+1. Open http://localhost:3000
+2. Login with Discord
+3. Go to Pricing → Upgrade to Basic
+4. Enter `4242 4242 4242 4242`
+5. Complete checkout → redirected back → nav shows "Basic" badge
+6. Now get 20 generations at faster speed
+
+### Watch webhooks:
+```bash
+stripe listen --forward-to localhost:3000/stripe/webhook
+```
+You'll see "Upgraded discord_id → basic" in your server logs.
+
+---
+
+## STEP 6 — Deploy to Railway
+
+1. Push to GitHub (.env in .gitignore!)
+2. Railway → New Project → Deploy from GitHub
+3. Add all Variables in Railway dashboard
+4. Change REDIRECT_URI and SITE_URL to your Railway domain
+5. Use the production webhook secret from Stripe
+
+---
+
+## Plan limits
+
+| Plan       | Generations/month | Speed      | Price |
+|------------|-------------------|------------|-------|
+| Free       | 5                 | ~15s       | $0    |
+| Basic      | 20                | ~7-10s     | $2/mo |
+| Enterprise | Unlimited         | Instant    | $5/mo |

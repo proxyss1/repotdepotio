@@ -1,0 +1,591 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FCV — Steam Manifest Generator</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --red:#c0392b;--red-h:#e74c3c;--red-d:#8c2217;
+  --red-s:rgba(192,57,43,0.12);
+  --bg:#080808;--s1:#0f0f0f;--s2:#161616;--s3:#1c1c1c;
+  --b1:rgba(255,255,255,0.06);--b2:rgba(255,255,255,0.1);
+  --b3:rgba(192,57,43,0.2);--b4:rgba(192,57,43,0.45);
+  --t1:#f0f0f0;--t2:#999;--t3:#555;
+  --green:#4ade80;--purple:#c084fc;--blue:#60a5fa;
+  --mono:'JetBrains Mono',monospace;--sans:'Inter',sans-serif;
+}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--t1);font-family:var(--sans);font-size:15px;line-height:1.6;
+  background-image:linear-gradient(rgba(192,57,43,0.035) 1px,transparent 1px),linear-gradient(90deg,rgba(192,57,43,0.035) 1px,transparent 1px);
+  background-size:48px 48px}
+
+/* NAV */
+nav{position:sticky;top:0;z-index:100;background:rgba(8,8,8,0.92);backdrop-filter:blur(12px);border-bottom:1px solid var(--b1)}
+.nav-inner{max-width:1100px;margin:0 auto;display:flex;align-items:center;justify-content:space-between;padding:0 32px;height:60px}
+.logo{display:flex;align-items:center;gap:10px}
+.logo-mark{width:32px;height:32px;background:var(--red);border-radius:6px;display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:12px;color:#fff;letter-spacing:1px}
+.logo-name{font-size:16px;font-weight:600}.logo-name span{color:var(--red-h)}
+.nav-links{display:flex;align-items:center;gap:4px}
+.nav-links a{padding:7px 14px;color:var(--t2);text-decoration:none;font-size:13.5px;border-radius:6px;transition:all .15s}
+.nav-links a:hover{color:var(--t1);background:var(--b1)}
+#navAuth{display:flex;align-items:center;gap:10px}
+.nav-user{display:flex;align-items:center;gap:8px;padding:5px 12px;background:var(--s2);border:1px solid var(--b1);border-radius:8px}
+.nav-avatar{width:26px;height:26px;border-radius:50%;object-fit:cover}
+.nav-username{font-size:13px;font-weight:500}
+.plan-pill{font-size:11px;font-family:var(--mono);padding:3px 8px;border-radius:4px;font-weight:600;letter-spacing:.5px}
+.plan-pill.free{background:rgba(74,222,128,0.1);color:var(--green)}
+.plan-pill.basic{background:var(--red-s);color:var(--red-h);border:1px solid var(--b3)}
+.plan-pill.enterprise{background:rgba(168,85,247,0.1);color:var(--purple)}
+.nav-gens{font-size:11px;font-family:var(--mono);color:var(--t3);padding:4px 10px;background:var(--s3);border-radius:4px}
+.btn-discord{display:flex;align-items:center;gap:8px;padding:8px 16px;background:#5865F2;color:#fff;border:none;border-radius:8px;font-size:13.5px;font-weight:600;cursor:pointer;font-family:var(--sans);text-decoration:none;transition:background .15s}
+.btn-discord:hover{background:#4752c4}
+.btn-discord svg{width:18px;height:18px;fill:#fff;flex-shrink:0}
+.btn-sm{padding:6px 14px;background:transparent;border:1px solid var(--b1);color:var(--t3);border-radius:6px;font-size:12px;cursor:pointer;font-family:var(--sans);transition:all .15s}
+.btn-sm:hover{border-color:var(--b2);color:var(--t2)}
+
+/* HERO */
+.hero{max-width:1100px;margin:0 auto;padding:90px 32px 80px;display:grid;grid-template-columns:1fr 440px;gap:64px;align-items:start}
+.hero-badge{display:inline-flex;align-items:center;gap:8px;background:var(--red-s);border:1px solid var(--b4);border-radius:20px;padding:4px 14px 4px 10px;font-size:12px;font-family:var(--mono);color:var(--red-h);letter-spacing:.5px;margin-bottom:24px}
+.hero-badge::before{content:'';width:6px;height:6px;background:var(--red-h);border-radius:50%}
+.hero h1{font-size:48px;font-weight:700;line-height:1.1;letter-spacing:-.5px;margin-bottom:20px}
+.hero h1 em{color:var(--red-h);font-style:normal}
+.hero-sub{color:var(--t2);font-size:16px;line-height:1.7;margin-bottom:32px}
+.hero-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.btn-primary{padding:12px 28px;background:var(--red);color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;transition:background .15s,transform .1s;font-family:var(--sans);text-decoration:none;display:inline-block}
+.btn-primary:hover{background:var(--red-h)}
+.btn-primary:active{transform:scale(.98)}
+.btn-outline{padding:12px 24px;background:transparent;color:var(--t1);border:1px solid var(--b2);border-radius:8px;font-size:14px;font-weight:500;cursor:pointer;transition:all .15s;font-family:var(--sans);text-decoration:none;display:inline-block}
+.btn-outline:hover{background:var(--b1)}
+
+/* GENERATOR CARD */
+.gen-card{background:var(--s1);border:1px solid var(--b1);border-radius:12px;overflow:hidden}
+.gen-card-header{background:var(--s2);border-bottom:1px solid var(--b1);padding:14px 20px;display:flex;align-items:center;gap:8px}
+.dot{width:10px;height:10px;border-radius:50%}
+.gen-card-title{font-size:12px;font-family:var(--mono);color:var(--t2);margin-left:6px}
+.gen-card-body{padding:24px}
+#loginGate{text-align:center;padding:16px 0}
+.gate-icon{font-size:32px;margin-bottom:12px}
+.gate-title{font-size:15px;font-weight:600;margin-bottom:6px}
+.gate-sub{font-size:13px;color:var(--t2);margin-bottom:20px;line-height:1.5}
+#genUI{display:none}
+.gen-label{font-size:11px;font-weight:600;letter-spacing:1.5px;color:var(--t3);text-transform:uppercase;margin-bottom:8px}
+.gen-input{width:100%;height:44px;background:var(--s3);border:1px solid var(--b1);border-radius:8px;color:var(--t1);font-family:var(--mono);font-size:15px;padding:0 16px;outline:none;transition:border-color .15s;margin-bottom:12px}
+.gen-input:focus{border-color:var(--b4)}
+.gen-input::placeholder{color:var(--t3)}
+.gen-input:disabled{opacity:.5;cursor:not-allowed}
+.gen-btn{width:100%;height:44px;background:var(--red);border:none;border-radius:8px;color:#fff;font-size:14px;font-weight:600;cursor:pointer;font-family:var(--sans);transition:background .15s,transform .1s}
+.gen-btn:hover{background:var(--red-h)}
+.gen-btn:active{transform:scale(.99)}
+.gen-btn:disabled{background:#2a1010;color:#555;cursor:not-allowed;transform:none}
+.prog-wrap{height:3px;background:var(--s3);border-radius:2px;margin:14px 0 10px;overflow:hidden;display:none}
+.prog-fill{height:100%;width:0%;background:var(--red-h);border-radius:2px;transition:width .3s ease}
+.gen-status{font-size:12px;font-family:var(--mono);color:var(--t3);min-height:16px}
+.gen-status.ok{color:var(--green)}.gen-status.err{color:var(--red-h)}
+.gen-log{margin-top:14px;background:#050505;border:1px solid var(--b1);border-radius:6px;padding:12px 14px;font-family:var(--mono);font-size:11px;color:var(--t3);line-height:1.9;max-height:130px;overflow-y:auto;display:none}
+.gen-log .ok{color:var(--green)}.gen-log .hi{color:var(--red-h)}
+.gen-meter{display:flex;align-items:center;justify-content:space-between;margin-top:14px;padding:10px 14px;background:var(--s3);border-radius:8px;border:1px solid var(--b1)}
+.gen-meter-label{font-size:11px;color:var(--t2);font-family:var(--mono)}
+.gen-meter-count{font-size:12px;font-family:var(--mono);color:var(--t1);font-weight:500;white-space:nowrap}
+.gen-meter-count span{color:var(--red-h)}
+.meter-bar{height:4px;background:var(--s2);border-radius:2px;margin-top:6px;overflow:hidden}
+.meter-fill{height:100%;border-radius:2px;background:var(--red);transition:width .4s}
+#limitBanner{display:none;margin-top:14px;padding:12px 16px;background:rgba(192,57,43,0.08);border:1px solid var(--b3);border-radius:8px}
+.limit-title{font-size:13px;font-weight:600;color:var(--red-h);margin-bottom:4px}
+.limit-sub{font-size:12px;color:var(--t2);margin-bottom:10px}
+.limit-actions{display:flex;gap:8px}
+.btn-upgrade{padding:7px 16px;background:var(--red);border:none;border-radius:6px;color:#fff;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--sans);transition:background .15s}
+.btn-upgrade:hover{background:var(--red-h)}
+.btn-manage{padding:7px 16px;background:transparent;border:1px solid var(--b2);border-radius:6px;color:var(--t2);font-size:12px;cursor:pointer;font-family:var(--sans);transition:all .15s}
+.btn-manage:hover{border-color:var(--b2);color:var(--t1)}
+#speedNote{display:none;margin-top:10px;padding:8px 12px;background:var(--s3);border-radius:6px;font-size:11px;color:var(--t3);font-family:var(--mono);border-left:2px solid var(--red-d)}
+
+/* SECTION */
+.section{max-width:1100px;margin:0 auto;padding:80px 32px}
+.section-header{text-align:center;margin-bottom:56px}
+.section-eyebrow{font-size:12px;font-weight:600;letter-spacing:2px;color:var(--red-h);text-transform:uppercase;font-family:var(--mono);margin-bottom:12px}
+.section-title{font-size:36px;font-weight:700;letter-spacing:-.5px;margin-bottom:14px}
+.section-sub{font-size:15px;color:var(--t2);max-width:500px;margin:0 auto;line-height:1.7}
+
+/* STEPS */
+.steps{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--b1);border:1px solid var(--b1);border-radius:12px;overflow:hidden}
+.step{background:var(--s1);padding:28px 24px}
+.step-num{font-size:11px;font-family:var(--mono);color:var(--red-h);letter-spacing:2px;margin-bottom:14px}
+.step h3{font-size:15px;font-weight:600;margin-bottom:8px}
+.step p{font-size:13px;color:var(--t2);line-height:1.6}
+
+/* PRICING */
+.plans{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
+.plan{background:var(--s1);border:1px solid var(--b1);border-radius:12px;padding:28px;position:relative;overflow:hidden;display:flex;flex-direction:column}
+.plan.featured{border-color:var(--b4);background:var(--s2)}
+.plan.featured::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:var(--red)}
+.plan-badge{display:inline-block;font-size:11px;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;padding:3px 10px;border-radius:4px;margin-bottom:20px}
+.plan-badge.free{background:rgba(74,222,128,0.1);color:var(--green)}
+.plan-badge.basic{background:var(--red-s);color:var(--red-h);border:1px solid var(--b3)}
+.plan-badge.enterprise{background:rgba(168,85,247,0.1);color:var(--purple)}
+.plan-name{font-size:20px;font-weight:700;margin-bottom:6px}
+.plan-desc{font-size:13px;color:var(--t2);margin-bottom:24px;line-height:1.5}
+.plan-price{margin-bottom:24px}
+.plan-price .amount{font-size:40px;font-weight:700;letter-spacing:-1px}
+.plan-price .period{font-size:14px;color:var(--t2);margin-left:4px}
+.plan-divider{height:1px;background:var(--b1);margin:20px 0}
+.plan-features{list-style:none;display:flex;flex-direction:column;gap:10px;margin-bottom:28px;flex:1}
+.plan-features li{display:flex;align-items:flex-start;gap:10px;font-size:13px;color:var(--t2)}
+.ci{flex-shrink:0;margin-top:2px;font-size:13px}
+.ci.y{color:var(--green)}.ci.n{color:var(--t3)}
+.plan-features li.dim{color:var(--t3)}
+.plan-btn{width:100%;padding:11px;border-radius:8px;font-size:13.5px;font-weight:600;cursor:pointer;font-family:var(--sans);transition:all .15s;border:1px solid;letter-spacing:.2px;margin-top:auto}
+.plan-btn.red{background:var(--red);border-color:var(--red);color:#fff}
+.plan-btn.red:hover{background:var(--red-h);border-color:var(--red-h)}
+.plan-btn.outline{background:transparent;border-color:var(--b2);color:var(--t2)}
+.plan-btn.outline:hover{border-color:var(--b2);background:var(--b1);color:var(--t1)}
+.plan-btn.disabled{background:transparent;border-color:var(--b1);color:var(--t3);cursor:default}
+.current-badge{display:inline-block;font-size:11px;font-family:var(--mono);color:var(--green);background:rgba(74,222,128,0.1);padding:3px 8px;border-radius:4px;margin-left:8px;vertical-align:middle}
+
+/* FEATURES */
+.feat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.feat-card{background:var(--s1);border:1px solid var(--b1);border-radius:10px;padding:22px}
+.feat-icon{width:36px;height:36px;background:var(--red-s);border:1px solid var(--b3);border-radius:8px;display:flex;align-items:center;justify-content:center;margin-bottom:14px}
+.feat-icon svg{width:18px;height:18px;stroke:var(--red-h);fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.feat-card h3{font-size:14px;font-weight:600;margin-bottom:6px}
+.feat-card p{font-size:13px;color:var(--t2);line-height:1.6}
+
+/* FOOTER */
+.footer-wrap{border-top:1px solid var(--b1);margin-top:40px}
+.footer{max-width:1100px;margin:0 auto;padding:32px;display:flex;align-items:center;justify-content:space-between}
+.footer-logo{font-size:14px;font-weight:600}.footer-logo span{color:var(--red-h)}
+.footer-note{font-size:12px;color:var(--t3);font-family:var(--mono)}
+
+/* TOAST */
+#toast{position:fixed;bottom:24px;right:24px;background:var(--s2);border:1px solid var(--b2);border-radius:8px;padding:12px 20px;font-size:13px;z-index:999;opacity:0;transform:translateY(8px);transition:all .25s;pointer-events:none}
+#toast.show{opacity:1;transform:translateY(0)}
+#toast.ok{border-color:rgba(74,222,128,0.3);color:var(--green)}
+#toast.err{border-color:var(--b4);color:var(--red-h)}
+
+::-webkit-scrollbar{width:4px;height:4px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--red-d);border-radius:2px}
+
+@media(max-width:900px){
+  .hero{grid-template-columns:1fr;gap:40px;padding:60px 24px 40px}
+  .hero h1{font-size:36px}
+  .steps{grid-template-columns:repeat(2,1fr)}
+  .plans{grid-template-columns:1fr}
+  .feat-grid{grid-template-columns:repeat(2,1fr)}
+  .nav-links{display:none}
+}
+@media(max-width:600px){
+  .feat-grid{grid-template-columns:1fr}
+  .steps{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+
+<div id="toast"></div>
+
+<nav>
+  <div class="nav-inner">
+    <div class="logo">
+      <div class="logo-mark">FCV</div>
+      <span class="logo-name">FC<span>V</span></span>
+    </div>
+    <div class="nav-links">
+      <a href="#generator">Generator</a>
+      <a href="#how">How it works</a>
+      <a href="#pricing">Pricing</a>
+    </div>
+    <div id="navAuth">
+      <a class="btn-discord" href="/auth/discord">
+        <svg viewBox="0 0 24 24"><path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057.1 18.08.114 18.1.133 18.113a19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.09 14.09 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03z"/></svg>
+        Login with Discord
+      </a>
+    </div>
+  </div>
+</nav>
+
+<div class="hero">
+  <div>
+    <div class="hero-badge">Steam Tools Integration</div>
+    <h1>Generate Steam<br><em>Manifests</em><br>in Seconds</h1>
+    <p class="hero-sub">Enter any Steam App ID to generate a fully keyed SteamTools Lua manifest file. All Windows depots resolved, decryption keys included.</p>
+    <div class="hero-actions">
+      <a class="btn-primary" href="#generator">Generate Now</a>
+      <a class="btn-outline" href="#pricing">View Plans</a>
+    </div>
+  </div>
+
+  <div class="gen-card" id="generator">
+    <div class="gen-card-header">
+      <div class="dot" style="background:#ff5f56"></div>
+      <div class="dot" style="background:#febc2e"></div>
+      <div class="dot" style="background:#28c840"></div>
+      <span class="gen-card-title">manifest_generator.lua</span>
+    </div>
+    <div class="gen-card-body">
+
+      <div id="loginGate">
+        <div class="gate-icon">🔐</div>
+        <div class="gate-title">Login to generate manifests</div>
+        <div class="gate-sub">Sign in with Discord to get 5 free generations per month. Upgrade anytime for more.</div>
+        <a class="btn-discord" href="/auth/discord" style="display:inline-flex;margin:0 auto">
+          <svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:#fff"><path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057.1 18.08.114 18.1.133 18.113a19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.09 14.09 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03z"/></svg>
+          Login with Discord
+        </a>
+      </div>
+
+      <div id="genUI">
+        <div id="speedNote">// free plan: ~15s generation time — upgrade for instant results</div>
+        <div class="gen-label" style="margin-top:10px">Steam App ID</div>
+        <input class="gen-input" id="appInput" type="text" placeholder="e.g.  730" autocomplete="off" spellcheck="false"/>
+        <button class="gen-btn" id="genBtn">Generate Manifest</button>
+        <div class="prog-wrap" id="progWrap"><div class="prog-fill" id="progFill"></div></div>
+        <div class="gen-status" id="genStatus">// awaiting input</div>
+        <div class="gen-log" id="genLog"></div>
+        <div class="gen-meter" id="genMeter">
+          <div style="flex:1;min-width:0">
+            <div class="gen-meter-label" id="meterLabel">Free plan · monthly generations</div>
+            <div class="meter-bar"><div class="meter-fill" id="meterFill"></div></div>
+          </div>
+          <div class="gen-meter-count" style="margin-left:12px"><span id="meterLeft">5</span> / <span id="meterMax">5</span> left</div>
+        </div>
+        <div id="limitBanner">
+          <div class="limit-title">Monthly limit reached</div>
+          <div class="limit-sub" id="limitSub">Upgrade to Basic for 20 generations/month at $2, or Enterprise for unlimited.</div>
+          <div class="limit-actions">
+            <button class="btn-upgrade" onclick="upgradeTo('basic')">Upgrade to Basic — $2/mo</button>
+            <button class="btn-upgrade" onclick="upgradeTo('enterprise')" style="background:#7c3aed">Enterprise — $5/mo</button>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- HOW IT WORKS -->
+<div class="section" id="how">
+  <div class="section-header">
+    <div class="section-eyebrow">Process</div>
+    <div class="section-title">How it works</div>
+    <p class="section-sub">Four steps from App ID to a ready-to-use SteamTools manifest file.</p>
+  </div>
+  <div class="steps">
+    <div class="step"><div class="step-num">01 / LOOKUP</div><h3>App resolution</h3><p>The App ID is resolved against the Steam store API to retrieve the game name and metadata.</p></div>
+    <div class="step"><div class="step-num">02 / DEPOTS</div><h3>Depot discovery</h3><p>All Windows-compatible depots are fetched from the SteamCMD API. Shared and non-Windows depots are filtered automatically.</p></div>
+    <div class="step"><div class="step-num">03 / KEYS</div><h3>Key matching</h3><p>Each depot ID is matched against the HomeDepot decryption key database. Only depots with valid keys are included.</p></div>
+    <div class="step"><div class="step-num">04 / OUTPUT</div><h3>Manifest download</h3><p>A fully formed <code style="font-family:var(--mono);font-size:12px;color:var(--red-h)">.lua</code> file is generated and downloaded — ready to drag into SteamTools.</p></div>
+  </div>
+</div>
+
+<!-- PRICING -->
+<div class="section" id="pricing" style="padding-top:0">
+  <div class="section-header">
+    <div class="section-eyebrow">Plans</div>
+    <div class="section-title">Simple, transparent pricing</div>
+    <p class="section-sub">Start free. Upgrade when you need more speed or volume.</p>
+  </div>
+  <div class="plans">
+
+    <div class="plan" id="planFree">
+      <div class="plan-badge free">Free</div>
+      <div class="plan-name">Free <span id="currentFree" class="current-badge" style="display:none">Current plan</span></div>
+      <div class="plan-desc">Everything you need to get started.</div>
+      <div class="plan-price"><span class="amount">$0</span><span class="period">/ forever</span></div>
+      <div class="plan-divider"></div>
+      <ul class="plan-features">
+        <li><span class="ci y">✓</span>5 generations per month</li>
+        <li><span class="ci y">✓</span>All Windows depot resolution</li>
+        <li><span class="ci y">✓</span>Full decryption key matching</li>
+        <li><span class="ci y">✓</span>Instant .lua download</li>
+        <li class="dim"><span class="ci n">✕</span>~15 second generation time</li>
+        <li class="dim"><span class="ci n">✕</span>Batch generation</li>
+        <li class="dim"><span class="ci n">✕</span>API access</li>
+      </ul>
+      <button class="plan-btn red" onclick="document.getElementById('generator').scrollIntoView({behavior:'smooth'})">Get started free</button>
+    </div>
+
+    <div class="plan featured" id="planBasic">
+      <div class="plan-badge basic">Basic</div>
+      <div class="plan-name">Basic <span id="currentBasic" class="current-badge" style="display:none">Current plan</span></div>
+      <div class="plan-desc">Faster speeds and higher limits for power users.</div>
+      <div class="plan-price"><span class="amount">$2</span><span class="period">/ month</span></div>
+      <div class="plan-divider"></div>
+      <ul class="plan-features">
+        <li><span class="ci y">✓</span>20 generations per month</li>
+        <li><span class="ci y">✓</span>Everything in Free</li>
+        <li><span class="ci y">✓</span>~7–10 second generation time</li>
+        <li><span class="ci y">✓</span>Priority key database updates</li>
+        <li><span class="ci y">✓</span>Download history</li>
+        <li class="dim"><span class="ci n">✕</span>Batch generation</li>
+        <li class="dim"><span class="ci n">✕</span>API access</li>
+      </ul>
+      <button class="plan-btn red" id="basicBtn" onclick="upgradeTo('basic')">Upgrade to Basic</button>
+    </div>
+
+    <div class="plan" id="planEnterprise">
+      <div class="plan-badge enterprise">Enterprise</div>
+      <div class="plan-name">Enterprise <span id="currentEnterprise" class="current-badge" style="display:none">Current plan</span></div>
+      <div class="plan-desc">Unlimited generations, fastest speeds, full API access.</div>
+      <div class="plan-price"><span class="amount">$5</span><span class="period">/ month</span></div>
+      <div class="plan-divider"></div>
+      <ul class="plan-features">
+        <li><span class="ci y">✓</span>Unlimited generations</li>
+        <li><span class="ci y">✓</span>Everything in Basic</li>
+        <li><span class="ci y">✓</span>Instant generation (&lt;2s)</li>
+        <li><span class="ci y">✓</span>Batch generation</li>
+        <li><span class="ci y">✓</span>Full REST API access</li>
+        <li><span class="ci y">✓</span>Webhook notifications</li>
+        <li><span class="ci y">✓</span>Dedicated support</li>
+      </ul>
+      <button class="plan-btn outline" id="enterpriseBtn" onclick="upgradeTo('enterprise')">Upgrade to Enterprise</button>
+    </div>
+
+  </div>
+  <p style="text-align:center;margin-top:20px;font-size:13px;color:var(--t3);font-family:var(--mono)">// manage or cancel your subscription anytime — <a href="#" onclick="openPortal()" style="color:var(--red-h);text-decoration:none">billing portal</a></p>
+</div>
+
+<!-- FEATURES -->
+<div class="section" id="features" style="padding-top:0">
+  <div class="section-header">
+    <div class="section-eyebrow">Features</div>
+    <div class="section-title">Built for reliability</div>
+    <p class="section-sub">Every part of the pipeline is designed to work correctly every time.</p>
+  </div>
+  <div class="feat-grid">
+    <div class="feat-card"><div class="feat-icon"><svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg></div><h3>All Windows depots</h3><p>Every Windows-compatible depot fetched automatically. Shared installs and non-Windows depots filtered out.</p></div>
+    <div class="feat-card"><div class="feat-icon"><svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div><h3>Real decryption keys</h3><p>Verified AES-256 depot keys from the HomeDepot database — the same source used by major manifest tools.</p></div>
+    <div class="feat-card"><div class="feat-icon"><svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></div><h3>Live progress logging</h3><p>Every pipeline step logged in real time — app lookup, depot resolution, key matching, and output.</p></div>
+    <div class="feat-card"><div class="feat-icon"><svg viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg></div><h3>Plan-based speed</h3><p>Generation speed scales with your plan. Enterprise users get near-instant results with no throttle.</p></div>
+    <div class="feat-card"><div class="feat-icon"><svg viewBox="0 0 24 24"><path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057.1 18.08.114 18.1.133 18.113a19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.09 14.09 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03z" fill="currentColor" stroke="none"/></svg></div><h3>Discord login</h3><p>One-click OAuth2 auth via Discord. No passwords, no email, no tracking beyond generation counts.</p></div>
+    <div class="feat-card"><div class="feat-icon"><svg viewBox="0 0 24 24"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></div><h3>SteamTools ready</h3><p>Exact addappid / depot format SteamTools expects. Drag the file in and restart Steam.</p></div>
+  </div>
+</div>
+
+<div class="footer-wrap">
+  <div class="footer">
+    <div class="footer-logo">FC<span>V</span> Manifest Generator</div>
+    <div class="footer-note">// for steamtools use only</div>
+  </div>
+</div>
+
+<script>
+let userData = null;
+let generating = false;
+
+function toast(msg, type='') {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.className = 'show '+(type||'');
+  clearTimeout(t._timer);
+  t._timer = setTimeout(()=>t.className='', 3500);
+}
+
+async function loadUser() {
+  try {
+    const r = await fetch('/api/me');
+    if (!r.ok) return;
+    userData = await r.json();
+    renderLoggedIn();
+  } catch {}
+
+  const p = new URLSearchParams(location.search);
+  if (p.get('subscribed')) { toast('Subscription activated!','ok'); history.replaceState({},'','/'); }
+  if (p.get('cancelled'))  { toast('Subscription cancelled.',''); history.replaceState({},'','/'); }
+}
+
+function renderLoggedIn() {
+  if (!userData) return;
+
+  const planLabel = { free:'Free', basic:'Basic', enterprise:'Enterprise' }[userData.plan] || 'Free';
+  const genLeft = userData.generationsLeft === null ? '∞' : userData.generationsLeft;
+  const genMax  = userData.limit === null ? '∞' : userData.limit;
+
+  document.getElementById('navAuth').innerHTML = `
+    <div class="nav-user">
+      <img class="nav-avatar" src="${userData.avatar}" alt="${userData.username}"/>
+      <span class="nav-username">${userData.username}</span>
+      <span class="plan-pill ${userData.plan}">${planLabel}</span>
+    </div>
+    <span class="nav-gens">${genLeft} / ${genMax} left</span>
+    <button class="btn-sm" onclick="logout()">Logout</button>
+  `;
+
+  document.getElementById('loginGate').style.display = 'none';
+  document.getElementById('genUI').style.display = 'block';
+
+  // Speed note for free users
+  if (userData.plan === 'free') {
+    document.getElementById('speedNote').style.display = 'block';
+  }
+
+  // Meter
+  updateMeter(userData.generationsLeft, userData.limit);
+
+  // Mark current plan badges
+  ['free','basic','enterprise'].forEach(p => {
+    const el = document.getElementById('current'+p.charAt(0).toUpperCase()+p.slice(1));
+    if (el) el.style.display = userData.plan === p ? 'inline-block' : 'none';
+  });
+
+  // Update plan buttons
+  updatePlanButtons();
+}
+
+function updateMeter(left, limit) {
+  if (limit === null) {
+    document.getElementById('meterLabel').textContent = `${userData.plan} plan · unlimited`;
+    document.getElementById('meterFill').style.width = '0%';
+    document.getElementById('meterLeft').textContent = '∞';
+    document.getElementById('meterMax').textContent = '∞';
+    document.getElementById('limitBanner').style.display = 'none';
+    return;
+  }
+  const used = limit - left;
+  document.getElementById('meterLabel').textContent = `${userData.plan} plan · monthly generations`;
+  document.getElementById('meterFill').style.width = (used / limit * 100) + '%';
+  document.getElementById('meterLeft').textContent = left;
+  document.getElementById('meterMax').textContent = limit;
+
+  if (left <= 0) {
+    document.getElementById('genBtn').disabled = true;
+    document.getElementById('appInput').disabled = true;
+    document.getElementById('genStatus').textContent = '// monthly limit reached';
+    document.getElementById('genStatus').className = 'gen-status err';
+    document.getElementById('limitBanner').style.display = 'block';
+  }
+}
+
+function updatePlanButtons() {
+  if (!userData) return;
+  const plan = userData.plan;
+  const bb = document.getElementById('basicBtn');
+  const eb = document.getElementById('enterpriseBtn');
+  if (!bb || !eb) return;
+
+  if (plan === 'basic') {
+    bb.textContent = 'Current plan';
+    bb.className = 'plan-btn disabled';
+    bb.onclick = null;
+    eb.textContent = 'Upgrade to Enterprise';
+    eb.className = 'plan-btn outline';
+    eb.onclick = () => upgradeTo('enterprise');
+  } else if (plan === 'enterprise') {
+    bb.textContent = 'Downgrade';
+    bb.className = 'plan-btn outline';
+    bb.onclick = openPortal;
+    eb.textContent = 'Current plan';
+    eb.className = 'plan-btn disabled';
+    eb.onclick = null;
+  } else {
+    bb.textContent = 'Upgrade to Basic';
+    bb.className = 'plan-btn red';
+    bb.onclick = () => upgradeTo('basic');
+    eb.textContent = 'Upgrade to Enterprise';
+    eb.className = 'plan-btn outline';
+    eb.onclick = () => upgradeTo('enterprise');
+  }
+}
+
+async function upgradeTo(plan) {
+  if (!userData) { window.location.href='/auth/discord'; return; }
+  try {
+    const r = await fetch('/api/subscribe', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ plan }),
+    });
+    const d = await r.json();
+    if (d.url) window.location.href = d.url;
+    else toast(d.error || 'Error creating checkout', 'err');
+  } catch { toast('Failed to start checkout', 'err'); }
+}
+
+async function openPortal() {
+  if (!userData) return;
+  try {
+    const r = await fetch('/api/portal', { method:'POST' });
+    const d = await r.json();
+    if (d.url) window.location.href = d.url;
+    else toast(d.error || 'Could not open portal', 'err');
+  } catch { toast('Failed to open billing portal', 'err'); }
+}
+
+function logout() { window.location.href = '/auth/logout'; }
+
+// Generator
+const inp = document.getElementById('appInput');
+const btn = document.getElementById('genBtn');
+const prog = document.getElementById('progWrap');
+const fill = document.getElementById('progFill');
+
+inp?.addEventListener('keydown', e => { if(e.key==='Enter') go(); });
+btn?.addEventListener('click', go);
+
+function sp(v) { prog.style.display=v>0?'block':'none'; fill.style.width=v+'%'; }
+function ss(t,c) { const s=document.getElementById('genStatus'); s.textContent=t; s.className='gen-status '+(c||''); }
+function lg(t,c) { const l=document.getElementById('genLog'); l.style.display='block'; l.innerHTML+=`<div class="${c||''}">${t}</div>`; l.scrollTop=l.scrollHeight; }
+
+async function go() {
+  if (generating || !userData) return;
+  const raw = inp.value.trim();
+  if (!raw || !/^\d+$/.test(raw)) { ss('// error: invalid app id','err'); return; }
+
+  generating=true; btn.disabled=true; btn.textContent='Generating...';
+  document.getElementById('genLog').innerHTML='';
+  document.getElementById('genLog').style.display='none';
+  sp(5); ss('// initialising...');
+
+  // Show a "waiting" message for free users
+  if (userData.plan === 'free') ss('// free plan: please wait ~15s...','');
+  if (userData.plan === 'basic') ss('// processing...','');
+
+  try {
+    sp(15);
+    const r = await fetch('/api/generate', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ appId: raw }),
+    });
+    sp(80);
+    const data = await r.json();
+    if (data.log) data.log.forEach(l => lg(`&gt; ${l.text}`, l.type==='ok'?'ok':''));
+
+    if (!r.ok) {
+      if (data.upgrade) {
+        ss('// monthly limit reached — upgrade to continue','err');
+        document.getElementById('limitBanner').style.display='block';
+      } else {
+        ss(`// ${data.error}`,'err');
+      }
+      sp(0); return;
+    }
+
+    sp(100);
+    ss(`// done — ${data.name} · ${data.depotCount} depot(s) keyed`,'ok');
+
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([data.lua],{type:'text/plain'}));
+    a.download = data.filename; a.click();
+
+    // Update meter
+    if (data.generationsLeft !== null) {
+      updateMeter(data.generationsLeft, userData.limit);
+      userData.generationsLeft = data.generationsLeft;
+      const navGens = document.querySelector('.nav-gens');
+      if (navGens) navGens.textContent = `${data.generationsLeft} / ${userData.limit} left`;
+    }
+    toast('Manifest downloaded!','ok');
+
+  } catch {
+    ss('// request failed — try again','err'); sp(0);
+  } finally {
+    generating=false;
+    btn.disabled = userData?.generationsLeft === 0;
+    btn.textContent='Generate Manifest';
+  }
+}
+
+loadUser();
+</script>
+</body>
+</html>
