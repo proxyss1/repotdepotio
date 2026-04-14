@@ -59,10 +59,29 @@ function getUser(id) {
   return loadUsers()[id];
 }
 
-function updateUser(id, fields) {
-  const all = loadUsers();
-  all[id] = { ...all[id], ...fields };
-  saveUsers(all);
+if (event.type === "checkout.session.completed") {
+  const s = event.data.object;
+
+  const customerId = s.customer;
+
+  const user = getUserByStripe(customerId);
+  if (!user) return;
+
+  // Get subscription details properly
+  const subscription = await stripe.subscriptions.retrieve(s.subscription);
+
+  const priceId = subscription.items.data[0].price.id;
+
+  let plan = "free";
+  if (priceId === process.env.STRIPE_PRICE_BASIC) plan = "basic";
+  if (priceId === process.env.STRIPE_PRICE_ENTERPRISE) plan = "enterprise";
+
+  updateUser(user.discordId, {
+    plan,
+    stripeSubscriptionId: s.subscription
+  });
+
+  console.log(`✅ User upgraded to ${plan}`);
 }
 
 function getUserByStripe(customerId) {
