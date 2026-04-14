@@ -298,32 +298,55 @@ app.post("/api/generate", auth, async (req, res) => {
   const u = getUser(req.session.user.id);
   const p = PLANS[u.plan] || PLANS.free;
 
-  if (
-    p.limit !== Infinity &&
-    u.generationsThisMonth >= p.limit
-  ) {
-    return res.status(429).json({
-      error: "Limit reached",
-    });
+  if (p.limit !== Infinity && u.generationsThisMonth >= p.limit) {
+    return res.status(429).json({ error: "Monthly generation limit reached" });
   }
 
   const id = parseInt(appId);
-
   let name = `App ${id}`;
 
+  // Fetch game name from Steam
   try {
     const r = await axios.get(
       `https://store.steampowered.com/api/appdetails?appids=${id}&filters=basic`
     );
-
     if (r.data[id]?.data?.name) name = r.data[id].data.name;
-  } catch {}
+  } catch {
+    // Non-fatal: fall back to generic name
+  }
 
+  // Fetch depot keys from remote source
+  let depotKeys;
+  try {
+    const keysRes = await axios.get(KEYS_URL);
+    depotKeys = keysRes.data;
+  } catch {
+    return res.status(502).json({ error: "Failed to fetch key pool" });
+  }
+
+  // Look up the depot key by ID string
+  const key = depotKeys[String(id)];
+
+  if (!key) {
+    return res.status(404).json({ error: `No depot key found for App ID ${id}` });
+  }
+
+  // Enforce plan delay
+  if (p.delayMs > 0) {
+    await new Promise((resolve) => setTimeout(resolve, p.delayMs));
+  }
+
+  // Increment usage only after all checks pass
   safeUpdateUser(u.discordId, {
     generationsThisMonth: u.generationsThisMonth + 1,
   });
 
-  res.json({ success: true, name });
+  res.json({
+    success: true,
+    name,
+    appId: id,
+    depotKey: key,
+  });
 });
 
 // ── START ────────────────────────────────────────────────
