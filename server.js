@@ -68,7 +68,7 @@ function updateUser(id, fields) {
 function getUserByStripe(customerId) {
   return Object.values(loadUsers()).find(u => u.stripeCustomerId === customerId) || null;
 }
-
+app.set("trust proxy", 1);
 // ── Middleware ─────────────────────────────────────────────────────────────
 app.use("/stripe/webhook", express.raw({ type: "application/json" }));
 app.use(express.json());
@@ -77,7 +77,11 @@ app.use(session({
   secret: SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
-  cookie: { secure: process.env.NODE_ENV === "production", maxAge: 7*24*60*60*1000 },
+  cookie: {
+    secure: true,          // always true in production
+    sameSite: "none",      // required for OAuth redirects
+    maxAge: 7 * 24 * 60 * 60 * 1000
+  },
 }));
 
 const auth = (req, res, next) => req.session.user ? next() : res.status(401).json({ error:"Not logged in" });
