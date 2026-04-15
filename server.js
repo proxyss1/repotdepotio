@@ -1,276 +1,355 @@
 require("dotenv").config();
-const express  = require("express");
-const session  = require("express-session");
-const axios    = require("axios");
-const fs       = require("fs");
-const path     = require("path");
-const Stripe   = require("stripe");
+const express = require("express");
+const session = require("express-session");
+const axios = require("axios");
+const fs = require("fs");
+const path = require("path");
+const Stripe = require("stripe");
 
-const app    = express();
+const app = express();
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
-const PORT   = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3000;
 
-const DISCORD_CLIENT_ID     = process.env.DISCORD_CLIENT_ID;
+// ── CONFIG ───────────────────────────────────────────────
+const DISCORD_CLIENT_ID = process.env.DISCORD_CLIENT_ID;
 const DISCORD_CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET;
-const REDIRECT_URI          = process.env.REDIRECT_URI;
-const SESSION_SECRET        = process.env.SESSION_SECRET || "change_me";
-const SITE_URL              = process.env.SITE_URL || "http://localhost:3000";
-const KEYS_URL              = "https://raw.githubusercontent.com/proxyss1/HomeDepot/refs/heads/main/depotkeys.json";
+const REDIRECT_URI = process.env.REDIRECT_URI;
+const SESSION_SECRET = process.env.SESSION_SECRET || "change_me";
+const SITE_URL = process.env.SITE_URL || "http://localhost:3000";
+
+const KEYS_URL =
+  "https://raw.githubusercontent.com/proxyss1/HomeDepot/refs/heads/main/depotkeys.json";
 
 const PRICE_IDS = {
-  basic:      process.env.STRIPE_PRICE_BASIC,
+  basic: process.env.STRIPE_PRICE_BASIC,
   enterprise: process.env.STRIPE_PRICE_ENTERPRISE,
 };
 
 const PLANS = {
-  free:       { limit: 5,        delayMs: 15000 },
-  basic:      { limit: 20,       delayMs: 8000  },
-  enterprise: { limit: Infinity, delayMs: 0     },
+  free: { limit: 5, delayMs: 15000 },
+  basic: { limit: 20, delayMs: 8000 },
+  enterprise: { limit: Infinity, delayMs: 0 },
 };
 
-// ── User store ─────────────────────────────────────────────────────────────
+// ── USER DB (JSON) ───────────────────────────────────────
 const USERS_FILE = path.join(__dirname, "users.json");
 
 function loadUsers() {
   if (!fs.existsSync(USERS_FILE)) fs.writeFileSync(USERS_FILE, "{}");
   return JSON.parse(fs.readFileSync(USERS_FILE, "utf8"));
 }
-function saveUsers(d) { fs.writeFileSync(USERS_FILE, JSON.stringify(d, null, 2)); }
 
-function monthKey() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+function saveUsers(data) {
+  fs.writeFileSync(USERS_FILE, JSON.stringify(data, null, 2));
+}
+
+function safeUpdateUser(id, fields) {
+  const users = loadUsers();
+  users[id] = { ...(users[id] || {}), ...fields };
+  saveUsers(users);
 }
 
 function getUser(id) {
-  const all = loadUsers();
-  if (!all[id]) {
-    all[id] = { discordId:id, username:"", avatar:"", plan:"free",
-      stripeCustomerId:null, stripeSubscriptionId:null,
-      generationsThisMonth:0, monthKey:monthKey(), createdAt:new Date().toISOString() };
-    saveUsers(all);
-  }
-  const u = loadUsers()[id];
-  if (u.monthKey !== monthKey()) {
-    u.generationsThisMonth = 0;
-    u.monthKey = monthKey();
-    const a = loadUsers(); a[id]=u; saveUsers(a);
-  }
-  return loadUsers()[id];
-}
+  const users = loadUsers();
 
-function updateUser(id, fields) {
-  const all = loadUsers();
-  all[id] = { ...all[id], ...fields };
-  saveUsers(all);
+  if (!users[id]) {
+    users[id] = {
+      discordId: id,
+      username: "",
+      avatar: "",
+      plan: "free",
+      stripeCustomerId: null,
+      stripeSubscriptionId: null,
+      generationsThisMonth: 0,
+      monthKey: "",
+      createdAt: new Date().toISOString(),
+    };
+  }
+
+  const u = users[id];
+
+  const mk = `${new Date().getFullYear()}-${new Date().getMonth() + 1}`;
+  if (u.monthKey !== mk) {
+    u.monthKey = mk;
+    u.generationsThisMonth = 0;
+  }
+
+  users[id] = u;
+  saveUsers(users);
+  return u;
 }
 
 function getUserByStripe(customerId) {
-  return Object.values(loadUsers()).find(u => u.stripeCustomerId === customerId) || null;
+  const users = loadUsers();
+  return Object.values(users).find(
+    (u) => u.stripeCustomerId === customerId
+  );
 }
 
-// ── Middleware ─────────────────────────────────────────────────────────────
+// ── MIDDLEWARE ───────────────────────────────────────────
+app.set("trust proxy", 1);
+
 app.use("/stripe/webhook", express.raw({ type: "application/json" }));
+
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
-app.use(session({
-  secret: SESSION_SECRET,
-  resave: false,
-  saveUninitialized: false,
-  cookie: { secure: process.env.NODE_ENV === "production", maxAge: 7*24*60*60*1000 },
-}));
 
-const auth = (req, res, next) => req.session.user ? next() : res.status(401).json({ error:"Not logged in" });
+app.use(
+  session({
+    secret: SESSION_SECRET,
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      secure: true,
+      sameSite: "none",
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    },
+  })
+);
 
-// ── Discord OAuth ──────────────────────────────────────────────────────────
+const auth = (req, res, next) =>
+  req.session.user ? next() : res.status(401).json({ error: "Not logged in" });
+
+// ── DISCORD LOGIN ────────────────────────────────────────
 app.get("/auth/discord", (req, res) => {
-  res.redirect(`https://discord.com/api/oauth2/authorize?${new URLSearchParams({
-    client_id: DISCORD_CLIENT_ID, redirect_uri: REDIRECT_URI,
-    response_type: "code", scope: "identify",
-  })}`);
+  res.redirect(
+    "https://discord.com/api/oauth2/authorize?" +
+      new URLSearchParams({
+        client_id: DISCORD_CLIENT_ID,
+        redirect_uri: REDIRECT_URI,
+        response_type: "code",
+        scope: "identify",
+      })
+  );
 });
 
 app.get("/auth/callback", async (req, res) => {
   const { code } = req.query;
   if (!code) return res.redirect("/?error=no_code");
+
   try {
-    const tok = await axios.post("https://discord.com/api/oauth2/token",
-      new URLSearchParams({ client_id:DISCORD_CLIENT_ID, client_secret:DISCORD_CLIENT_SECRET,
-        grant_type:"authorization_code", code, redirect_uri:REDIRECT_URI, scope:"identify" }),
-      { headers:{ "Content-Type":"application/x-www-form-urlencoded" } });
-    const u = (await axios.get("https://discord.com/api/users/@me",
-      { headers:{ Authorization:`Bearer ${tok.data.access_token}` } })).data;
-    const tag = u.discriminator==="0" ? u.username : `${u.username}#${u.discriminator}`;
-    const av  = u.avatar ? `https://cdn.discordapp.com/avatars/${u.id}/${u.avatar}.png`
-                         : `https://cdn.discordapp.com/embed/avatars/0.png`;
+    const token = await axios.post(
+      "https://discord.com/api/oauth2/token",
+      new URLSearchParams({
+        client_id: DISCORD_CLIENT_ID,
+        client_secret: DISCORD_CLIENT_SECRET,
+        grant_type: "authorization_code",
+        code,
+        redirect_uri: REDIRECT_URI,
+      }),
+      { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
+    );
+
+    const u = (
+      await axios.get("https://discord.com/api/users/@me", {
+        headers: { Authorization: `Bearer ${token.data.access_token}` },
+      })
+    ).data;
+
+    const tag =
+      u.discriminator === "0" ? u.username : `${u.username}#${u.discriminator}`;
+
+    const avatar = u.avatar
+      ? `https://cdn.discordapp.com/avatars/${u.id}/${u.avatar}.png`
+      : `https://cdn.discordapp.com/embed/avatars/0.png`;
+
     getUser(u.id);
-    updateUser(u.id, { username:tag, avatar:av });
-    req.session.user = { id:u.id, username:tag, avatar:av };
+    safeUpdateUser(u.id, { username: tag, avatar });
+
+    req.session.user = { id: u.id, username: tag, avatar };
+
     res.redirect("/");
-  } catch(e) {
-    console.error("OAuth error:", e.response?.data || e.message);
+  } catch (e) {
+    console.error(e.message);
     res.redirect("/?error=oauth_failed");
   }
 });
 
-app.get("/auth/logout", (req, res) => req.session.destroy(() => res.redirect("/")));
+app.get("/auth/logout", (req, res) =>
+  req.session.destroy(() => res.redirect("/"))
+);
 
-// ── API: me ────────────────────────────────────────────────────────────────
+// ── API ME ───────────────────────────────────────────────
 app.get("/api/me", auth, (req, res) => {
   const u = getUser(req.session.user.id);
   const p = PLANS[u.plan] || PLANS.free;
+
   const limit = p.limit === Infinity ? null : p.limit;
-  const left  = limit === null ? null : Math.max(0, limit - u.generationsThisMonth);
-  res.json({ id:u.discordId, username:u.username, avatar:u.avatar,
-    plan:u.plan, generationsThisMonth:u.generationsThisMonth, generationsLeft:left, limit });
+  const left =
+    limit === null
+      ? null
+      : Math.max(0, limit - u.generationsThisMonth);
+
+  res.json({
+    id: u.discordId,
+    username: u.username,
+    avatar: u.avatar,
+    plan: u.plan,
+    generationsThisMonth: u.generationsThisMonth,
+    generationsLeft: left,
+    limit,
+  });
 });
 
-// ── Stripe: checkout ───────────────────────────────────────────────────────
+// ── STRIPE CHECKOUT ─────────────────────────────────────
 app.post("/api/subscribe", auth, async (req, res) => {
   const { plan } = req.body;
-  if (!PRICE_IDS[plan]) return res.status(400).json({ error:"Invalid plan" });
+  if (!PRICE_IDS[plan])
+    return res.status(400).json({ error: "Invalid plan" });
+
   const u = getUser(req.session.user.id);
+
   let cid = u.stripeCustomerId;
+
   if (!cid) {
-    const c = await stripe.customers.create({ name:u.username, metadata:{ discordId:u.discordId } });
+    const c = await stripe.customers.create({
+      name: u.username,
+      metadata: { discordId: u.discordId },
+    });
+
     cid = c.id;
-    updateUser(u.discordId, { stripeCustomerId:cid });
+    safeUpdateUser(u.discordId, { stripeCustomerId: cid });
   }
-  const sess = await stripe.checkout.sessions.create({
+
+  const session = await stripe.checkout.sessions.create({
     customer: cid,
     payment_method_types: ["card"],
-    line_items: [{ price:PRICE_IDS[plan], quantity:1 }],
+    line_items: [{ price: PRICE_IDS[plan], quantity: 1 }],
     mode: "subscription",
     success_url: `${SITE_URL}/?subscribed=1`,
-    cancel_url:  `${SITE_URL}/?cancelled=1`,
-    metadata: { discordId:u.discordId, plan },
+    cancel_url: `${SITE_URL}/?cancelled=1`,
   });
-  res.json({ url:sess.url });
+
+  res.json({ url: session.url });
 });
 
-// ── Stripe: billing portal ─────────────────────────────────────────────────
-app.post("/api/portal", auth, async (req, res) => {
-  const u = getUser(req.session.user.id);
-  if (!u.stripeCustomerId) return res.status(400).json({ error:"No subscription" });
-  const s = await stripe.billingPortal.sessions.create({
-    customer: u.stripeCustomerId, return_url: SITE_URL });
-  res.json({ url:s.url });
-});
-
-// ── Stripe: webhook ────────────────────────────────────────────────────────
-app.post("/stripe/webhook", (req, res) => {
+// ── STRIPE WEBHOOK (FIXED) ──────────────────────────────
+app.post("/stripe/webhook", async (req, res) => {
   let event;
+
   try {
     event = stripe.webhooks.constructEvent(
-      req.body, req.headers["stripe-signature"], process.env.STRIPE_WEBHOOK_SECRET);
-  } catch(e) { return res.status(400).send(`Webhook Error: ${e.message}`); }
+      req.body,
+      req.headers["stripe-signature"],
+      process.env.STRIPE_WEBHOOK_SECRET
+    );
+  } catch (err) {
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
 
-  if (event.type === "checkout.session.completed") {
-    const s = event.data.object;
-    if (s.metadata?.discordId && s.metadata?.plan) {
-      updateUser(s.metadata.discordId, { plan:s.metadata.plan, stripeSubscriptionId:s.subscription });
-      console.log(`✅ Upgraded ${s.metadata.discordId} → ${s.metadata.plan}`);
+  try {
+    console.log("🔥 Stripe event:", event.type);
+
+    // ── PRIMARY: PAYMENT SUCCESS ─────────────────────────
+    if (event.type === "invoice.paid") {
+      const invoice = event.data.object;
+
+      const user = getUserByStripe(invoice.customer);
+      if (!user) return res.json({ received: true });
+
+      const sub = await stripe.subscriptions.retrieve(
+        invoice.subscription
+      );
+
+      const priceId = sub.items.data[0].price.id;
+
+      let plan = "free";
+      if (priceId === process.env.STRIPE_PRICE_BASIC) plan = "basic";
+      if (priceId === process.env.STRIPE_PRICE_ENTERPRISE)
+        plan = "enterprise";
+
+      safeUpdateUser(user.discordId, {
+        plan,
+        stripeSubscriptionId: invoice.subscription,
+      });
+
+      console.log(`💰 Updated ${user.discordId} → ${plan}`);
     }
-  }
 
-  if (event.type === "customer.subscription.deleted" ||
-      (event.type === "customer.subscription.updated" && event.data.object.status !== "active")) {
-    const u = getUserByStripe(event.data.object.customer);
-    if (u) { updateUser(u.discordId, { plan:"free", stripeSubscriptionId:null }); }
-  }
+    // ── CANCELLED ────────────────────────────────────────
+    if (event.type === "customer.subscription.deleted") {
+      const sub = event.data.object;
 
-  res.json({ received:true });
+      const user = getUserByStripe(sub.customer);
+      if (user) {
+        safeUpdateUser(user.discordId, {
+          plan: "free",
+          stripeSubscriptionId: null,
+        });
+
+        console.log(`⚠️ Downgraded ${user.discordId}`);
+      }
+    }
+
+    res.json({ received: true });
+  } catch (e) {
+    console.error("Webhook error:", e);
+    res.status(500).send("Webhook failed");
+  }
 });
 
-// ── API: generate ──────────────────────────────────────────────────────────
+// ── GENERATE ─────────────────────────────────────────────
 app.post("/api/generate", auth, async (req, res) => {
   const { appId } = req.body;
-  if (!appId || isNaN(parseInt(appId))) return res.status(400).json({ error:"Invalid App ID" });
+
+  if (!appId || isNaN(parseInt(appId)))
+    return res.status(400).json({ error: "Invalid App ID" });
 
   const u = getUser(req.session.user.id);
   const p = PLANS[u.plan] || PLANS.free;
 
   if (p.limit !== Infinity && u.generationsThisMonth >= p.limit) {
-    return res.status(429).json({
-      error: `Monthly limit of ${p.limit} reached for your ${u.plan} plan.`,
-      upgrade: true,
-    });
+    return res.status(429).json({ error: "Monthly generation limit reached" });
   }
 
-  const id  = parseInt(appId);
-  const log = [];
+  const id = parseInt(appId);
+  let name = `App ${id}`;
 
-  // Speed throttle per plan
-  if (p.delayMs > 0) {
-    await sleep(p.delayMs + Math.random() * 5000);
-  }
-
+  // Fetch game name from Steam
   try {
-    let name = `App ${id}`;
-    try {
-      const r = await axios.get(
-        `https://store.steampowered.com/api/appdetails?appids=${id}&filters=basic`, { timeout:8000 });
-      if (r.data[id]?.data?.name) name = r.data[id].data.name;
-    } catch {}
-    log.push({ text:`Resolved: ${name}`, type:"ok" });
-
-    const depots = await fetchDepots(id);
-    log.push({ text:`${depots.length} depot(s): ${depots.join(", ")}`, type:"ok" });
-
-    const keys = await fetchKeys();
-    const matched = depots.filter(d=>keys[d]).map(d=>({ id:d, key:keys[d] }));
-    const skipped = depots.filter(d=>!keys[d]);
-    matched.forEach(d=>log.push({ text:`Key matched: depot ${d.id}`, type:"ok" }));
-    skipped.forEach(d=>log.push({ text:`No key: depot ${d}`, type:"dim" }));
-
-    if (!matched.length) return res.status(404).json({ error:"No decryption keys found.", log });
-
-    const lua = [
-      `-- ${name} (AppID: ${id})`,
-      `-- FCV Manifest Generator  ${new Date().toISOString().split("T")[0]}`,
-      ``, `addappid(${id})`, ``, `-- Depots`,
-      ...matched.map(d=>`addappid(${d.id}, 1, "${d.key}")`),
-    ].join("\n");
-
-    updateUser(req.session.user.id, { generationsThisMonth: u.generationsThisMonth + 1 });
-    const newU = getUser(req.session.user.id);
-    const left = p.limit === Infinity ? null : Math.max(0, p.limit - newU.generationsThisMonth);
-    log.push({ text:`Done — ${matched.length} depot(s) keyed`, type:"ok" });
-
-    res.json({ success:true, name, appId:id, depotCount:matched.length,
-      lua, filename:`${id}_manifest.lua`, generationsLeft:left, log });
-
-  } catch(e) {
-    console.error("Generate error:", e.message);
-    res.status(500).json({ error:"Generation failed.", log });
+    const r = await axios.get(
+      `https://store.steampowered.com/api/appdetails?appids=${id}&filters=basic`
+    );
+    if (r.data[id]?.data?.name) name = r.data[id].data.name;
+  } catch {
+    // Non-fatal: fall back to generic name
   }
+
+  // Fetch depot keys from remote source
+  let depotKeys;
+  try {
+    const keysRes = await axios.get(KEYS_URL);
+    depotKeys = keysRes.data;
+  } catch {
+    return res.status(502).json({ error: "Failed to fetch key pool" });
+  }
+
+  // Look up the depot key by ID string
+  const key = depotKeys[String(id)];
+
+  if (!key) {
+    return res.status(404).json({ error: `No depot key found for App ID ${id}` });
+  }
+
+  // Enforce plan delay
+  if (p.delayMs > 0) {
+    await new Promise((resolve) => setTimeout(resolve, p.delayMs));
+  }
+
+  // Increment usage only after all checks pass
+  safeUpdateUser(u.discordId, {
+    generationsThisMonth: u.generationsThisMonth + 1,
+  });
+
+  res.json({
+    success: true,
+    name,
+    appId: id,
+    depotKey: key,
+  });
 });
 
-function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
-
-async function fetchDepots(appId) {
-  try {
-    const r = await axios.get(`https://api.steamcmd.net/v1/info/${appId}`, { timeout:12000 });
-    const d = r.data?.data?.[String(appId)]?.depots;
-    if (d) {
-      const ids = [];
-      for (const [id, info] of Object.entries(d)) {
-        if (isNaN(parseInt(id))) continue;
-        if (info.sharedinstall==="1"||info.sharedinstall===1) continue;
-        const os = info?.config?.oslist ?? "";
-        if (os===""||os.includes("windows")) ids.push(id);
-      }
-      if (ids.length) return ids;
-    }
-  } catch {}
-  return [String(appId+1)];
-}
-
-let keyCache = null;
-async function fetchKeys() {
-  if (keyCache) return keyCache;
-  keyCache = (await axios.get(KEYS_URL, { timeout:15000 })).data;
-  return keyCache;
-}
-
-app.listen(PORT, () => console.log(`✅ FCV running on port ${PORT}`));
+// ── START ────────────────────────────────────────────────
+app.listen(PORT, () =>
+  console.log(`✅ Server running on port ${PORT}`)
+);
