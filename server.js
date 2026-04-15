@@ -1,6 +1,6 @@
 require("dotenv").config();
 const express = require("express");
-const session = require("express-session");
+const expressSession = require("express-session");
 const axios = require("axios");
 const path = require("path");
 const Stripe = require("stripe");
@@ -36,7 +36,7 @@ const {
 app.set("trust proxy", 1);
 
 // ─────────────────────────────
-// STRIPE WEBHOOK (BEFORE JSON)
+// STRIPE WEBHOOK (MUST BE BEFORE JSON MIDDLEWARE)
 // ─────────────────────────────
 app.post(
   "/api/stripe-webhook",
@@ -44,10 +44,10 @@ app.post(
   async (req, res) => {
     const sig = req.headers["stripe-signature"];
 
-    let event;
+    let stripeEvent;
 
     try {
-      event = stripe.webhooks.constructEvent(
+      stripeEvent = stripe.webhooks.constructEvent(
         req.body,
         sig,
         process.env.STRIPE_WEBHOOK_SECRET
@@ -57,16 +57,26 @@ app.post(
       return res.status(400).send("Webhook Error");
     }
 
-    if (event.type === "checkout.session.completed") {
-      const session = event.data.object;
-      const discordId = session.metadata.discord_id;
+    if (stripeEvent.type === "checkout.session.completed") {
+      const checkoutSession = stripeEvent.data.object;
+      const discordId = checkoutSession.metadata?.discord_id;
 
-      console.log("💰 Payment success:", discordId);
+      if (!discordId) {
+        console.error("No discord_id in metadata");
+        return res.status(400).send("Missing discord_id");
+      }
 
-      await supabase
-        .from("whitelist") // ✅ FIXED
+      console.log("💰 Payment success for discord_id:", discordId);
+
+      const { error } = await supabase
+        .from("whitelist")
         .update({ plan: "premium" })
         .eq("discord_id", discordId);
+
+      if (error) {
+        console.error("Supabase update failed:", error.message);
+        return res.status(500).send("DB Error");
+      }
     }
 
     res.json({ received: true });
@@ -80,23 +90,24 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
 app.use(
-  session({
+  expressSession({
     secret: SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
     cookie: {
-      secure: true,
-      sameSite: "none",
+      secure: process.env.NODE_ENV === "production", // only force secure in prod
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
       maxAge: 7 * 24 * 60 * 60 * 1000,
+      httpOnly: true,
     },
   })
 );
 
 // ─────────────────────────────
-// AUTH
+// AUTH MIDDLEWARE
 // ─────────────────────────────
-const auth = (req, res, next) => {
-  if (!req.session.user) {
+const requireAuth = (req, res, next) => {
+  if (!req.session?.user) {
     return res.status(401).json({ error: "Not logged in" });
   }
   next();
@@ -111,46 +122,65 @@ function monthKey() {
 }
 
 async function getOrCreateUser(discordUser) {
-  const { data: existing } = await supabase
-    .from("whitelist") // ✅ FIXED
+  const currentMonthKey = monthKey();
+
+  // Fetch existing user — use maybeSingle() to safely handle "not found"
+  const { data: existing, error: fetchError } = await supabase
+    .from("whitelist")
     .select("*")
-    .eq("discord_id", discordUser.id);
+    .eq("discord_id", discordUser.id)
+    .maybeSingle();
 
-  let user = existing?.[0];
+  if (fetchError) {
+    console.error("Supabase fetch error:", fetchError.message);
+    return null;
+  }
 
-  if (!user) {
-    const { data } = await supabase
-      .from("whitelist") // ✅ FIXED
+  // New user — insert
+  if (!existing) {
+    const { data: inserted, error: insertError } = await supabase
+      .from("whitelist")
       .insert([
         {
           discord_id: discordUser.id,
           username: discordUser.username,
           plan: "free",
           generations_this_month: 0,
-          month_key: monthKey(),
+          month_key: currentMonthKey,
         },
       ])
       .select()
       .single();
 
-    return data;
+    if (insertError) {
+      console.error("Supabase insert error:", insertError.message);
+      return null;
+    }
+
+    return inserted;
   }
 
-  if (user.month_key !== monthKey()) {
-    const { data } = await supabase
-      .from("whitelist") // ✅ FIXED
+  // Existing user — reset generation count if it's a new month
+  if (existing.month_key !== currentMonthKey) {
+    const { data: updated, error: updateError } = await supabase
+      .from("whitelist")
       .update({
         generations_this_month: 0,
-        month_key: monthKey(),
+        month_key: currentMonthKey,
       })
       .eq("discord_id", discordUser.id)
       .select()
       .single();
 
-    return data;
+    if (updateError) {
+      console.error("Supabase update error:", updateError.message);
+      return null;
+    }
+
+    return updated;
   }
 
-  return user;
+  return existing;
 }
 
 // ─────────────────────────────
@@ -170,7 +200,7 @@ app.get("/auth/discord", (req, res) => {
 });
 
 // ─────────────────────────────
-// CALLBACK (FIXED SESSION)
+// DISCORD CALLBACK
 // ─────────────────────────────
 app.get("/auth/callback", async (req, res) => {
   const { code } = req.query;
@@ -178,6 +208,7 @@ app.get("/auth/callback", async (req, res) => {
   if (!code) return res.redirect("/?error=no_code");
 
   try {
+    // Exchange code for access token
     const tokenRes = await axios.post(
       "https://discord.com/api/oauth2/token",
       new URLSearchParams({
@@ -192,16 +223,32 @@ app.get("/auth/callback", async (req, res) => {
 
     const access_token = tokenRes.data.access_token;
 
-    const discordUser = (
-      await axios.get("https://discord.com/api/users/@me", {
-        headers: { Authorization: `Bearer ${access_token}` },
-      })
-    ).data;
+    if (!access_token) {
+      console.error("No access token returned from Discord");
+      return res.redirect("/?error=no_token");
+    }
 
+    // Fetch Discord user info
+    const discordUserRes = await axios.get(
+      "https://discord.com/api/users/@me",
+      {
+        headers: { Authorization: `Bearer ${access_token}` },
+      }
+    );
+
+    const discordUser = discordUserRes.data;
+
+    if (!discordUser?.id) {
+      console.error("Invalid Discord user response");
+      return res.redirect("/?error=bad_discord_user");
+    }
+
+    // Upsert user in DB
     const user = await getOrCreateUser(discordUser);
 
     if (!user) return res.redirect("/?error=db_fail");
 
+    // Save session
     req.session.user = {
       id: discordUser.id,
       username: discordUser.username,
@@ -229,30 +276,49 @@ app.get("/auth/logout", (req, res) => {
 });
 
 // ─────────────────────────────
-// GET USER
+// GET CURRENT USER
 // ─────────────────────────────
-app.get("/api/me", auth, async (req, res) => {
-  const { data } = await supabase
-    .from("whitelist") // ✅ FIXED
+app.get("/api/me", requireAuth, async (req, res) => {
+  const { data, error } = await supabase
+    .from("whitelist")
     .select("*")
-    .eq("discord_id", req.session.user.id);
+    .eq("discord_id", req.session.user.id)
+    .maybeSingle();
 
-  res.json(data?.[0]);
+  if (error) {
+    console.error("Supabase /api/me error:", error.message);
+    return res.status(500).json({ error: "DB error" });
+  }
+
+  if (!data) {
+    return res.status(404).json({ error: "User not found" });
+  }
+
+  res.json(data);
 });
 
 // ─────────────────────────────
 // STRIPE CHECKOUT
 // ─────────────────────────────
-app.post("/api/create-checkout", auth, async (req, res) => {
+app.post("/api/create-checkout", requireAuth, async (req, res) => {
   try {
     const { plan } = req.body;
+
+    if (!plan) {
+      return res.status(400).json({ error: "Missing plan" });
+    }
 
     const priceId =
       plan === "enterprise"
         ? process.env.STRIPE_PRICE_ENTERPRISE
         : process.env.STRIPE_PRICE_BASIC;
 
-    const session = await stripe.checkout.sessions.create({
+    if (!priceId) {
+      console.error("Missing price ID for plan:", plan);
+      return res.status(500).json({ error: "Invalid plan config" });
+    }
+
+    const checkoutSession = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
       mode: "subscription",
       line_items: [{ price: priceId, quantity: 1 }],
@@ -263,9 +329,9 @@ app.post("/api/create-checkout", auth, async (req, res) => {
       },
     });
 
-    res.json({ url: session.url });
+    res.json({ url: checkoutSession.url });
   } catch (err) {
-    console.error("Stripe error:", err);
+    console.error("Stripe error:", err.message);
     res.status(500).json({ error: "Stripe failed" });
   }
 });
@@ -274,5 +340,5 @@ app.post("/api/create-checkout", auth, async (req, res) => {
 // START
 // ─────────────────────────────
 app.listen(PORT, () => {
-  console.log(`🚀 Running on ${SITE_URL}`);
+  console.log(`🚀 Running on port ${PORT} — ${SITE_URL}`);
 });
