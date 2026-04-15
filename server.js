@@ -27,14 +27,55 @@ const {
   DISCORD_CLIENT_SECRET,
   REDIRECT_URI,
   SESSION_SECRET,
-  SITE_URL = "http://localhost:3000",
+  SITE_URL,
 } = process.env;
+
+// ─────────────────────────────
+// TRUST PROXY (RAILWAY)
+// ─────────────────────────────
+app.set("trust proxy", 1);
+
+// ─────────────────────────────
+// STRIPE WEBHOOK (BEFORE JSON)
+// ─────────────────────────────
+app.post(
+  "/api/stripe-webhook",
+  express.raw({ type: "application/json" }),
+  async (req, res) => {
+    const sig = req.headers["stripe-signature"];
+
+    let event;
+
+    try {
+      event = stripe.webhooks.constructEvent(
+        req.body,
+        sig,
+        process.env.STRIPE_WEBHOOK_SECRET
+      );
+    } catch (err) {
+      console.error("Webhook verify failed:", err.message);
+      return res.status(400).send("Webhook Error");
+    }
+
+    if (event.type === "checkout.session.completed") {
+      const session = event.data.object;
+      const discordId = session.metadata.discord_id;
+
+      console.log("💰 Payment success:", discordId);
+
+      await supabase
+        .from("whitelist") // ✅ FIXED
+        .update({ plan: "premium" })
+        .eq("discord_id", discordId);
+    }
+
+    res.json({ received: true });
+  }
+);
 
 // ─────────────────────────────
 // MIDDLEWARE
 // ─────────────────────────────
-app.set("trust proxy", 1);
-
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
@@ -44,13 +85,16 @@ app.use(
     resave: false,
     saveUninitialized: false,
     cookie: {
-      secure: false, // IMPORTANT for localhost
-      sameSite: "lax",
+      secure: true,
+      sameSite: "none",
       maxAge: 7 * 24 * 60 * 60 * 1000,
     },
   })
 );
 
+// ─────────────────────────────
+// AUTH
+// ─────────────────────────────
 const auth = (req, res, next) => {
   if (!req.session.user) {
     return res.status(401).json({ error: "Not logged in" });
@@ -59,60 +103,42 @@ const auth = (req, res, next) => {
 };
 
 // ─────────────────────────────
-// HELPERS (SUPABASE)
+// HELPERS
 // ─────────────────────────────
-
 function monthKey() {
   const d = new Date();
   return `${d.getFullYear()}-${d.getMonth() + 1}`;
 }
 
-// GET OR CREATE USER (SAFE)
 async function getOrCreateUser(discordUser) {
-  const { data: existing, error } = await supabase
-    .from("users")
+  const { data: existing } = await supabase
+    .from("whitelist") // ✅ FIXED
     .select("*")
     .eq("discord_id", discordUser.id);
 
-  if (error) {
-    console.error("Supabase select error:", error);
-    return null;
-  }
-
   let user = existing?.[0];
 
-  // CREATE USER IF NOT EXISTS
   if (!user) {
-    const newUser = {
-      discord_id: discordUser.id,
-      username: discordUser.username,
-      avatar: discordUser.avatar
-        ? `https://cdn.discordapp.com/avatars/${discordUser.id}/${discordUser.avatar}.png`
-        : null,
-      plan: "free",
-      generations_this_month: 0,
-      month_key: monthKey(),
-      blacklisted: false,
-    };
-
-    const { data, error: insertErr } = await supabase
-      .from("users")
-      .insert([newUser])
+    const { data } = await supabase
+      .from("whitelist") // ✅ FIXED
+      .insert([
+        {
+          discord_id: discordUser.id,
+          username: discordUser.username,
+          plan: "free",
+          generations_this_month: 0,
+          month_key: monthKey(),
+        },
+      ])
       .select()
       .single();
-
-    if (insertErr) {
-      console.error("Insert error:", insertErr);
-      return null;
-    }
 
     return data;
   }
 
-  // RESET MONTH IF NEEDED
   if (user.month_key !== monthKey()) {
     const { data } = await supabase
-      .from("users")
+      .from("whitelist") // ✅ FIXED
       .update({
         generations_this_month: 0,
         month_key: monthKey(),
@@ -125,16 +151,6 @@ async function getOrCreateUser(discordUser) {
   }
 
   return user;
-}
-
-// UPDATE USER
-async function updateUser(discordId, fields) {
-  const { error } = await supabase
-    .from("users")
-    .update(fields)
-    .eq("discord_id", discordId);
-
-  if (error) console.error("updateUser error:", error);
 }
 
 // ─────────────────────────────
@@ -154,7 +170,7 @@ app.get("/auth/discord", (req, res) => {
 });
 
 // ─────────────────────────────
-// DISCORD CALLBACK (FIXED + DEBUG)
+// CALLBACK (FIXED SESSION)
 // ─────────────────────────────
 app.get("/auth/callback", async (req, res) => {
   const { code } = req.query;
@@ -162,7 +178,6 @@ app.get("/auth/callback", async (req, res) => {
   if (!code) return res.redirect("/?error=no_code");
 
   try {
-    // exchange code
     const tokenRes = await axios.post(
       "https://discord.com/api/oauth2/token",
       new URLSearchParams({
@@ -183,22 +198,25 @@ app.get("/auth/callback", async (req, res) => {
       })
     ).data;
 
-    console.log("Logged in Discord user:", discordUser);
-
     const user = await getOrCreateUser(discordUser);
 
-    if (!user) {
-      return res.redirect("/?error=db_fail");
-    }
+    if (!user) return res.redirect("/?error=db_fail");
 
     req.session.user = {
       id: discordUser.id,
       username: discordUser.username,
     };
 
-    res.redirect("/");
+    req.session.save((err) => {
+      if (err) {
+        console.error("Session save failed:", err);
+        return res.redirect("/?error=session_fail");
+      }
+
+      res.redirect("/");
+    });
   } catch (e) {
-    console.error("OAuth FAILED:", e.response?.data || e.message);
+    console.error("OAuth error:", e.response?.data || e.message);
     res.redirect("/?error=oauth_failed");
   }
 });
@@ -211,24 +229,50 @@ app.get("/auth/logout", (req, res) => {
 });
 
 // ─────────────────────────────
-// ME API
+// GET USER
 // ─────────────────────────────
 app.get("/api/me", auth, async (req, res) => {
   const { data } = await supabase
-    .from("users")
+    .from("whitelist") // ✅ FIXED
     .select("*")
     .eq("discord_id", req.session.user.id);
 
-  const user = data?.[0];
-
-  if (!user) return res.status(404).json({ error: "User not found" });
-
-  res.json(user);
+  res.json(data?.[0]);
 });
 
 // ─────────────────────────────
-// START SERVER
+// STRIPE CHECKOUT
+// ─────────────────────────────
+app.post("/api/create-checkout", auth, async (req, res) => {
+  try {
+    const { plan } = req.body;
+
+    const priceId =
+      plan === "enterprise"
+        ? process.env.STRIPE_PRICE_ENTERPRISE
+        : process.env.STRIPE_PRICE_BASIC;
+
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ["card"],
+      mode: "subscription",
+      line_items: [{ price: priceId, quantity: 1 }],
+      success_url: `${SITE_URL}/success`,
+      cancel_url: `${SITE_URL}/cancel`,
+      metadata: {
+        discord_id: req.session.user.id,
+      },
+    });
+
+    res.json({ url: session.url });
+  } catch (err) {
+    console.error("Stripe error:", err);
+    res.status(500).json({ error: "Stripe failed" });
+  }
+});
+
+// ─────────────────────────────
+// START
 // ─────────────────────────────
 app.listen(PORT, () => {
-  console.log(`✅ Server running on http://localhost:${PORT}`);
+  console.log(`🚀 Running on ${SITE_URL}`);
 });
