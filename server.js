@@ -8,6 +8,7 @@ const { createClient } = require("@supabase/supabase-js");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const IS_PROD = process.env.NODE_ENV === "production";
 
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 
@@ -28,6 +29,7 @@ const {
   REDIRECT_URI,
   SESSION_SECRET,
   SITE_URL,
+  COOKIE_DOMAIN,
 } = process.env;
 
 // ─────────────────────────────
@@ -36,14 +38,72 @@ const {
 app.set("trust proxy", 1);
 
 // ─────────────────────────────
-// STRIPE WEBHOOK (MUST BE BEFORE JSON MIDDLEWARE)
+// SUPABASE SESSION STORE
+// ─────────────────────────────
+// Run this SQL in Supabase to create the sessions table:
+//
+//   create table if not exists sessions (
+//     sid text primary key,
+//     sess jsonb not null,
+//     expire timestamptz not null
+//   );
+//   create index if not exists sessions_expire_idx on sessions (expire);
+//
+class SupabaseSessionStore extends expressSession.Store {
+  async get(sid, cb) {
+    try {
+      const { data, error } = await supabase
+        .from("sessions")
+        .select("sess, expire")
+        .eq("sid", sid)
+        .maybeSingle();
+
+      if (error) return cb(error);
+      if (!data) return cb(null, null);
+      if (new Date(data.expire) < new Date()) {
+        await supabase.from("sessions").delete().eq("sid", sid);
+        return cb(null, null);
+      }
+      return cb(null, data.sess);
+    } catch (e) {
+      return cb(e);
+    }
+  }
+
+  async set(sid, sess, cb) {
+    try {
+      const maxAge = sess.cookie?.maxAge || 7 * 24 * 60 * 60 * 1000;
+      const expire = new Date(Date.now() + maxAge).toISOString();
+
+      const { error } = await supabase
+        .from("sessions")
+        .upsert({ sid, sess, expire }, { onConflict: "sid" });
+
+      if (error) return cb(error);
+      return cb(null);
+    } catch (e) {
+      return cb(e);
+    }
+  }
+
+  async destroy(sid, cb) {
+    try {
+      await supabase.from("sessions").delete().eq("sid", sid);
+      return cb(null);
+    } catch (e) {
+      return cb(e);
+    }
+  }
+}
+
+// ─────────────────────────────
+// STRIPE WEBHOOK (BEFORE JSON MIDDLEWARE)
 // ─────────────────────────────
 app.post(
   "/api/stripe-webhook",
   express.raw({ type: "application/json" }),
   async (req, res) => {
     const sig = req.headers["stripe-signature"];
-
     let stripeEvent;
 
     try {
@@ -62,7 +122,7 @@ app.post(
       const discordId = checkoutSession.metadata?.discord_id;
 
       if (!discordId) {
-        console.error("No discord_id in metadata");
+        console.error("No discord_id in Stripe metadata");
         return res.status(400).send("Missing discord_id");
       }
 
@@ -89,17 +149,24 @@ app.post(
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
+const sessionCookieOptions = {
+  httpOnly: true,
+  secure: IS_PROD,
+  sameSite: IS_PROD ? "none" : "lax",
+  maxAge: 7 * 24 * 60 * 60 * 1000,
+};
+
+if (COOKIE_DOMAIN) {
+  sessionCookieOptions.domain = COOKIE_DOMAIN;
+}
+
 app.use(
   expressSession({
+    store: new SupabaseSessionStore(),
     secret: SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
-    cookie: {
-      secure: process.env.NODE_ENV === "production", // only force secure in prod
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-      httpOnly: true,
-    },
+    cookie: sessionCookieOptions,
   })
 );
 
@@ -124,7 +191,6 @@ function monthKey() {
 async function getOrCreateUser(discordUser) {
   const currentMonthKey = monthKey();
 
-  // Fetch existing user — use maybeSingle() to safely handle "not found"
   const { data: existing, error: fetchError } = await supabase
     .from("whitelist")
     .select("*")
@@ -136,7 +202,6 @@ async function getOrCreateUser(discordUser) {
     return null;
   }
 
-  // New user — insert
   if (!existing) {
     const { data: inserted, error: insertError } = await supabase
       .from("whitelist")
@@ -160,20 +225,16 @@ async function getOrCreateUser(discordUser) {
     return inserted;
   }
 
-  // Existing user — reset generation count if it's a new month
   if (existing.month_key !== currentMonthKey) {
     const { data: updated, error: updateError } = await supabase
       .from("whitelist")
-      .update({
-        generations_this_month: 0,
-        month_key: currentMonthKey,
-      })
+      .update({ generations_this_month: 0, month_key: currentMonthKey })
       .eq("discord_id", discordUser.id)
       .select()
       .single();
 
     if (updateError) {
-      console.error("Supabase update error:", updateError.message);
+      console.error("Supabase month-reset error:", updateError.message);
       return null;
     }
 
@@ -204,11 +265,9 @@ app.get("/auth/discord", (req, res) => {
 // ─────────────────────────────
 app.get("/auth/callback", async (req, res) => {
   const { code } = req.query;
-
   if (!code) return res.redirect("/?error=no_code");
 
   try {
-    // Exchange code for access token
     const tokenRes = await axios.post(
       "https://discord.com/api/oauth2/token",
       new URLSearchParams({
@@ -222,45 +281,45 @@ app.get("/auth/callback", async (req, res) => {
     );
 
     const access_token = tokenRes.data.access_token;
-
     if (!access_token) {
-      console.error("No access token returned from Discord");
+      console.error("No access token from Discord");
       return res.redirect("/?error=no_token");
     }
 
-    // Fetch Discord user info
     const discordUserRes = await axios.get(
       "https://discord.com/api/users/@me",
-      {
-        headers: { Authorization: `Bearer ${access_token}` },
-      }
+      { headers: { Authorization: `Bearer ${access_token}` } }
     );
-
     const discordUser = discordUserRes.data;
 
     if (!discordUser?.id) {
-      console.error("Invalid Discord user response");
+      console.error("Bad Discord user response:", discordUser);
       return res.redirect("/?error=bad_discord_user");
     }
 
-    // Upsert user in DB
     const user = await getOrCreateUser(discordUser);
-
     if (!user) return res.redirect("/?error=db_fail");
 
-    // Save session
-    req.session.user = {
-      id: discordUser.id,
-      username: discordUser.username,
-    };
-
-    req.session.save((err) => {
+    req.session.regenerate((err) => {
       if (err) {
-        console.error("Session save failed:", err);
+        console.error("Session regenerate failed:", err);
         return res.redirect("/?error=session_fail");
       }
 
-      res.redirect("/");
+      req.session.user = {
+        id: discordUser.id,
+        username: discordUser.username,
+      };
+
+      req.session.save((saveErr) => {
+        if (saveErr) {
+          console.error("Session save failed:", saveErr);
+          return res.redirect("/?error=session_fail");
+        }
+
+        console.log("✅ Session saved for", discordUser.username, "sid:", req.session.id);
+        res.redirect("/");
+      });
     });
   } catch (e) {
     console.error("OAuth error:", e.response?.data || e.message);
@@ -303,10 +362,7 @@ app.get("/api/me", requireAuth, async (req, res) => {
 app.post("/api/create-checkout", requireAuth, async (req, res) => {
   try {
     const { plan } = req.body;
-
-    if (!plan) {
-      return res.status(400).json({ error: "Missing plan" });
-    }
+    if (!plan) return res.status(400).json({ error: "Missing plan" });
 
     const priceId =
       plan === "enterprise"
@@ -324,9 +380,7 @@ app.post("/api/create-checkout", requireAuth, async (req, res) => {
       line_items: [{ price: priceId, quantity: 1 }],
       success_url: `${SITE_URL}/success`,
       cancel_url: `${SITE_URL}/cancel`,
-      metadata: {
-        discord_id: req.session.user.id,
-      },
+      metadata: { discord_id: req.session.user.id },
     });
 
     res.json({ url: checkoutSession.url });
